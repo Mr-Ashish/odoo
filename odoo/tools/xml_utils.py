@@ -15,31 +15,55 @@ from odoo.tools.misc import file_open
 __all__ = [
     "cleanup_xml_node",
     "load_xsd_files_from_url",
+    "remove_control_characters",
     "validate_xml_from_attachment",
 ]
 
 _logger = logging.getLogger(__name__)
 
 
+# XML 1.0 Char production (negated): strip anything *not* in Char.
+# Must be applied to Unicode strings — encoding the class and matching
+# against UTF-8 bytes collapses multi-byte ranges (e.g. U+FFFE/U+FFFF
+# survive and later crash lxml with "All strings must be XML compatible").
+# See: https://www.w3.org/TR/xml/#charsets
+# Related: odoo/odoo#271153
+_XML_ILLEGAL_CHAR_RE = re.compile(
+    '[^'
+    '\u0009'                 # #x9
+    '\u000A'                 # #xA
+    '\u000D'                 # #xD
+    '\u0020-\uD7FF'
+    '\uE000-\uFFFD'
+    '\U00010000-\U0010FFFF'
+    ']'
+)
+
+
 def remove_control_characters(byte_node):
+    """Remove characters not allowed by the XML 1.0 ``Char`` production.
+
+    Accepts ``str`` or ``bytes`` and returns the **same type**.
+
+    Filtering must run on Unicode code points. Applying a UTF-8-encoded
+    character class as a *bytes* regex collapses multi-byte ranges, so
+    non-XML characters such as U+FFFE / U+FFFF were kept. Callers that
+    assign the result to ``lxml`` text nodes then raise
+    ``ValueError: All strings must be XML compatible`` (EDI / UBL export).
     """
-    The characters to be escaped are the control characters #x0 to #x1F and #x7F (most of which cannot appear in XML)
-    [...] XML processors must accept any character in the range specified for Char:
-    `Char	   :: =   	#x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]`
-    source:https://www.w3.org/TR/xml/
-    """
-    return re.sub(
-        '[^'
-        '\u0009'
-        '\u000A'
-        '\u000D'
-        '\u0020-\uD7FF'
-        '\uE000-\uFFFD'
-        '\U00010000-\U0010FFFF'
-        ']'.encode(),
-        b'',
-        byte_node,
+    if isinstance(byte_node, str):
+        return _XML_ILLEGAL_CHAR_RE.sub('', byte_node)
+    if isinstance(byte_node, (bytes, bytearray, memoryview)):
+        raw = bytes(byte_node)
+        # UTF-8 with surrogatepass: round-trip any byte sequence while still
+        # filtering illegal XML code points at the Unicode level. Strict
+        # UTF-8 would raise UnicodeDecodeError on legacy Latin-1 EDI bytes.
+        text_ = raw.decode('utf-8', errors='surrogatepass')
+        return _XML_ILLEGAL_CHAR_RE.sub('', text_).encode('utf-8', errors='surrogatepass')
+    raise TypeError(
+        f"remove_control_characters() expected str or bytes, got {type(byte_node)!r}"
     )
+
 
 
 class odoo_resolver(etree.Resolver):

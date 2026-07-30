@@ -4,7 +4,7 @@
 
 from lxml import etree
 from odoo.tests import common
-from odoo.tools.xml_utils import cleanup_xml_node
+from odoo.tools.xml_utils import cleanup_xml_node, remove_control_characters
 
 
 class TestXMLTools(common.TransactionCase):
@@ -151,3 +151,47 @@ _</h1>
         result_string = etree.tostring(cleanup_xml_node(original_string, **kwargs)).decode()
         self.assertEqual(expected_string, result_string)
         self.assertNotEqual(expected_string, original_string)
+
+
+class TestRemoveControlCharacters(common.TransactionCase):
+    """odoo/odoo#271153 — filter must run on Unicode, not UTF-8 bytes."""
+
+    def test_strips_non_xml_codepoints_str(self):
+        dirty = "ok\x00\x01\ufffe\uffff\tend"
+        clean = remove_control_characters(dirty)
+        self.assertEqual(clean, "ok\tend")
+        self.assertNotIn("\ufffe", clean)
+        self.assertNotIn("\uffff", clean)
+
+    def test_strips_non_xml_codepoints_bytes(self):
+        dirty = "A\ufffeB\uffffC\x00".encode("utf-8")
+        clean = remove_control_characters(dirty)
+        self.assertIsInstance(clean, bytes)
+        self.assertEqual(clean, b"ABC")
+        self.assertNotIn(b"\xef\xbf\xbe", clean)
+        self.assertNotIn(b"\xef\xbf\xbf", clean)
+
+    def test_preserves_xml_allowed_controls(self):
+        # #x9, #xA, #xD and printable BMP
+        s = "a\tb\nc\rd"
+        self.assertEqual(remove_control_characters(s), s)
+        self.assertEqual(remove_control_characters(s.encode()), s.encode())
+
+    def test_lxml_accepts_sanitized_text(self):
+        dirty = "Invoice #1\ufffe — café\uffff"
+        clean = remove_control_characters(dirty)
+        el = etree.Element("Note")
+        el.text = clean  # must not raise ValueError
+        self.assertEqual(el.text, "Invoice #1 — café")
+
+    def test_type_error_on_bad_input(self):
+        with self.assertRaises(TypeError):
+            remove_control_characters(123)
+
+    def test_non_utf8_bytes_do_not_raise(self):
+        # Latin-1 high bytes must not crash the sanitizer (EDI edge case).
+        dirty = "café".encode("latin-1")  # b'caf\xe9'
+        clean = remove_control_characters(dirty)
+        self.assertIsInstance(clean, bytes)
+        # Result is still valid UTF-8 after surrogatepass round-trip.
+        clean.decode("utf-8")
