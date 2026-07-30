@@ -67,7 +67,9 @@ def dict_to_xml(node, *, nsmap={}, template=None, render_empty_nodes=False, tag=
     # Add text content if present
     text = node.get('_text')
     if text is not None and text is not False:
-        element.text = remove_control_characters(str(text).encode()).decode()
+        # Filter at Unicode level (str in → str out). Encoding the pattern and
+        # scrubbing UTF-8 bytes used to leave U+FFFE/U+FFFF intact (#271153).
+        element.text = remove_control_characters(str(text))
 
     # Add child nodes
     for child_tag, child in node.items():
