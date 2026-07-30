@@ -55,8 +55,11 @@ def remove_control_characters(byte_node):
         return _XML_ILLEGAL_CHAR_RE.sub('', byte_node)
     if isinstance(byte_node, (bytes, bytearray, memoryview)):
         raw = bytes(byte_node)
-        text_ = raw.decode('utf-8')
-        return _XML_ILLEGAL_CHAR_RE.sub('', text_).encode('utf-8')
+        # UTF-8 with surrogatepass: round-trip any byte sequence while still
+        # filtering illegal XML code points at the Unicode level. Strict
+        # UTF-8 would raise UnicodeDecodeError on legacy Latin-1 EDI bytes.
+        text_ = raw.decode('utf-8', errors='surrogatepass')
+        return _XML_ILLEGAL_CHAR_RE.sub('', text_).encode('utf-8', errors='surrogatepass')
     raise TypeError(
         f"remove_control_characters() expected str or bytes, got {type(byte_node)!r}"
     )

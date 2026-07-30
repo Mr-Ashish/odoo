@@ -187,3 +187,11 @@ class TestRemoveControlCharacters(common.TransactionCase):
     def test_type_error_on_bad_input(self):
         with self.assertRaises(TypeError):
             remove_control_characters(123)
+
+    def test_non_utf8_bytes_do_not_raise(self):
+        # Latin-1 high bytes must not crash the sanitizer (EDI edge case).
+        dirty = "café".encode("latin-1")  # b'caf\xe9'
+        clean = remove_control_characters(dirty)
+        self.assertIsInstance(clean, bytes)
+        # Result is still valid UTF-8 after surrogatepass round-trip.
+        clean.decode("utf-8")
